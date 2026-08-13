@@ -70,6 +70,26 @@ app.post("/api/workers", async (req, res) => {
     }
 });
 
+// Get all jobs (admin)
+app.get("/api/admin/jobs", async (req, res) => {
+  try {
+    const allJobs = await Job.find().sort({ createdAt: -1 });
+    res.json(allJobs);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch jobs" });
+  }
+});
+
+// Get all workers (admin)
+app.get("/api/admin/workers", async (req, res) => {
+  try {
+    const allWorkers = await Worker.find().sort({ createdAt: -1 });
+    res.json(allWorkers);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch workers" });
+  }
+});
+
 app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
 });
