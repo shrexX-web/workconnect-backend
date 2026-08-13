@@ -28,6 +28,48 @@ app.post("/api/jobs", async (req, res) => {
         res.status(500).json({ error: "Failed to save job" });
     }
 });
+
+// Get all public community jobs
+app.get("/api/jobs/public", async (req, res) => {
+  try {
+    const publicJobs = await Job.find({ visibility: "public" }).sort({ createdAt: -1 });
+    res.json(publicJobs);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch public jobs" });
+  }
+});
+
+// A worker claims/volunteers for a public job
+app.patch("/api/jobs/:id/claim", async (req, res) => {
+  try {
+    const { workerName } = req.body;
+    const job = await Job.findById(req.params.id);
+
+    if (!job) return res.status(404).json({ error: "Job not found" });
+    if (job.status !== "open") return res.status(400).json({ error: "Job already claimed" });
+
+    job.status = "claimed";
+    job.claimedBy = workerName;
+    await job.save();
+
+    res.json(job);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to claim job" });
+  }
+});
+
+const Worker = require("./models/Worker");
+
+app.post("/api/workers", async (req, res) => {
+    try {
+        const newWorker = new Worker(req.body);
+        await newWorker.save();
+        res.status(201).json(newWorker);
+    }   catch (err) {
+        res.status(500).json({ error: "Failed to save worker"});
+    }
+});
+
 app.listen(PORT, () => {
-    console.log('Server running on http://localhost:${PORT}');
+    console.log(`Server running on http://localhost:${PORT}`);
 });
