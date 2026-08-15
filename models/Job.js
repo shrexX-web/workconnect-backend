@@ -20,6 +20,10 @@ const jobSchema = new mongoose.Schema({
     type: String,
     default: null
   },
+  claimedByPhone: {
+  type: String,
+  default: null
+},
   createdAt: {
     type: Date,
     default: Date.now
