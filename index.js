@@ -39,14 +39,12 @@ app.post("/api/jobs", async (req, res) => {
 app.get("/api/jobs/public", async (req, res) => {
   try {
     const publicJobs = await Job.find({ visibility: "public" }).sort({ createdAt: -1 });
-
     const jobsWithComments = await Promise.all(
       publicJobs.map(async (job) => {
         const commentCount = await Comment.countDocuments({ jobId: job._id.toString() });
         return { ...job.toObject(), commentCount };
       })
     );
-
     res.json(jobsWithComments);
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch public jobs" });
@@ -67,7 +65,7 @@ app.get("/api/jobs/available/:service", async (req, res) => {
   }
 });
 
-// A worker claims/volunteers for a job (validates category match)
+// A worker claims a job (validates category match server-side)
 app.patch("/api/jobs/:id/claim", async (req, res) => {
   try {
     const { workerName, workerPhone } = req.body;
@@ -93,7 +91,7 @@ app.patch("/api/jobs/:id/claim", async (req, res) => {
   }
 });
 
-// Get jobs claimed by a specific worker (by phone)
+// Get jobs claimed by a specific worker
 app.get("/api/jobs/claimed/:phone", async (req, res) => {
   try {
     const claimedJobs = await Job.find({ claimedByPhone: req.params.phone }).sort({ createdAt: -1 });
@@ -103,7 +101,7 @@ app.get("/api/jobs/claimed/:phone", async (req, res) => {
   }
 });
 
-// Get jobs posted by a specific customer (by phone)
+// Get jobs posted by a specific customer
 app.get("/api/jobs/customer/:phone", async (req, res) => {
   try {
     const customerJobs = await Job.find({ phone: req.params.phone }).sort({ createdAt: -1 });
@@ -118,13 +116,46 @@ app.patch("/api/jobs/:id/complete", async (req, res) => {
   try {
     const job = await Job.findById(req.params.id);
     if (!job) return res.status(404).json({ error: "Job not found" });
-
     job.status = "completed";
     await job.save();
-
     res.json(job);
   } catch (err) {
     res.status(500).json({ error: "Failed to update job" });
+  }
+});
+
+// ADMIN: reset a job back to open (undo a bad/stale claim)
+app.patch("/api/admin/jobs/:id/reset", async (req, res) => {
+  try {
+    const job = await Job.findById(req.params.id);
+    if (!job) return res.status(404).json({ error: "Job not found" });
+    job.status = "open";
+    job.claimedBy = null;
+    job.claimedByPhone = null;
+    await job.save();
+    res.json(job);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to reset job" });
+  }
+});
+
+// ADMIN: delete a job
+app.delete("/api/admin/jobs/:id", async (req, res) => {
+  try {
+    await Job.findByIdAndDelete(req.params.id);
+    res.json({ deleted: true });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to delete job" });
+  }
+});
+
+// ADMIN: delete a worker
+app.delete("/api/admin/workers/:id", async (req, res) => {
+  try {
+    await Worker.findByIdAndDelete(req.params.id);
+    res.json({ deleted: true });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to delete worker" });
   }
 });
 
@@ -154,7 +185,6 @@ app.get("/api/workers/phone/:phone", async (req, res) => {
 app.get("/api/workers/by-service/:service", async (req, res) => {
   try {
     const workers = await Worker.find({ service: req.params.service }).sort({ createdAt: -1 });
-
     const workersWithRatings = await Promise.all(
       workers.map(async (worker) => {
         const reviews = await Review.find({ workerPhone: worker.phone });
@@ -164,14 +194,13 @@ app.get("/api/workers/by-service/:service", async (req, res) => {
         return { ...worker.toObject(), avgRating, reviewCount: reviews.length };
       })
     );
-
     res.json(workersWithRatings);
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch workers" });
   }
 });
 
-// Add a comment to a job
+// Comments
 app.post("/api/comments", async (req, res) => {
   try {
     const { jobId, name, comment } = req.body;
@@ -183,7 +212,6 @@ app.post("/api/comments", async (req, res) => {
   }
 });
 
-// Get comments for a job
 app.get("/api/comments/:jobId", async (req, res) => {
   try {
     const comments = await Comment.find({ jobId: req.params.jobId }).sort({ createdAt: 1 });
@@ -193,11 +221,10 @@ app.get("/api/comments/:jobId", async (req, res) => {
   }
 });
 
-// Submit a review for a completed job (worker info derived server-side)
+// Reviews
 app.post("/api/reviews", async (req, res) => {
   try {
     const { jobId, rating, comment } = req.body;
-
     const job = await Job.findById(jobId);
     if (!job) return res.status(404).json({ error: "Job not found" });
     if (job.status !== "completed") return res.status(400).json({ error: "This job isn't marked completed yet" });
@@ -221,7 +248,6 @@ app.post("/api/reviews", async (req, res) => {
   }
 });
 
-// Get all reviews for a worker
 app.get("/api/reviews/:phone", async (req, res) => {
   try {
     const reviews = await Review.find({ workerPhone: req.params.phone }).sort({ createdAt: -1 });
@@ -231,7 +257,6 @@ app.get("/api/reviews/:phone", async (req, res) => {
   }
 });
 
-// Check which jobIds already have reviews
 app.post("/api/reviews/check", async (req, res) => {
   try {
     const { jobIds } = req.body;
@@ -242,13 +267,18 @@ app.post("/api/reviews/check", async (req, res) => {
   }
 });
 
-// Send OTP for worker login
+// OTP - idempotent send (fixes the race condition bug)
 app.post("/api/otp/send", async (req, res) => {
   try {
     const { phone } = req.body;
     const worker = await Worker.findOne({ phone });
     if (!worker) return res.status(404).json({ error: "This phone number isn't registered as a worker yet." });
 
+    const existing = otpStore[phone];
+    if (existing && Date.now() < existing.expiresAt) {
+      return res.json({ message: "OTP already sent", otp: existing.otp, simulated: true });
+    }
+
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     otpStore[phone] = { otp, expiresAt: Date.now() + 5 * 60 * 1000 };
     res.json({ message: "OTP generated", otp, simulated: true });
@@ -257,13 +287,17 @@ app.post("/api/otp/send", async (req, res) => {
   }
 });
 
-// Send OTP for customer login
 app.post("/api/otp/send-customer", async (req, res) => {
   try {
     const { phone } = req.body;
     const job = await Job.findOne({ phone });
     if (!job) return res.status(404).json({ error: "No jobs found for this phone number." });
 
+    const existing = otpStore[phone];
+    if (existing && Date.now() < existing.expiresAt) {
+      return res.json({ message: "OTP already sent", otp: existing.otp, simulated: true });
+    }
+
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     otpStore[phone] = { otp, expiresAt: Date.now() + 5 * 60 * 1000 };
     res.json({ message: "OTP generated", otp, simulated: true });
@@ -272,7 +306,6 @@ app.post("/api/otp/send-customer", async (req, res) => {
   }
 });
 
-// Verify OTP (shared by worker and customer login)
 app.post("/api/otp/verify", async (req, res) => {
   try {
     const { phone, otp } = req.body;
@@ -289,7 +322,7 @@ app.post("/api/otp/verify", async (req, res) => {
   }
 });
 
-// Get all jobs (admin)
+// Admin: get everything
 app.get("/api/admin/jobs", async (req, res) => {
   try {
     const allJobs = await Job.find().sort({ createdAt: -1 });
@@ -299,7 +332,6 @@ app.get("/api/admin/jobs", async (req, res) => {
   }
 });
 
-// Get all workers (admin)
 app.get("/api/admin/workers", async (req, res) => {
   try {
     const allWorkers = await Worker.find().sort({ createdAt: -1 });
