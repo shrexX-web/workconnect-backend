@@ -19,6 +19,7 @@ app.get("/", (req, res) => {
 const PORT = process.env.PORT || 5000;
 const Job = require("./models/Job");
 const Worker = require("./models/Worker");
+const otpStore = {};
 
 // Post a new job
 app.post("/api/jobs", async (req, res) => {
@@ -124,6 +125,42 @@ app.get("/api/admin/workers", async (req, res) => {
     res.json(allWorkers);
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch workers" });
+  }
+});
+
+// Send OTP (simulated - returns the OTP instead of texting it)
+app.post("/api/otp/send", async (req, res) => {
+  try {
+    const { phone } = req.body;
+    const worker = await Worker.findOne({ phone });
+
+    if (!worker) {
+      return res.status(404).json({ error: "This phone number isn't registered as a worker yet." });
+    }
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    otpStore[phone] = { otp, expiresAt: Date.now() + 5 * 60 * 1000 };
+
+    res.json({ message: "OTP generated", otp, simulated: true });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to generate OTP" });
+  }
+});
+
+// Verify OTP
+app.post("/api/otp/verify", async (req, res) => {
+  try {
+    const { phone, otp } = req.body;
+    const record = otpStore[phone];
+
+    if (!record) return res.status(400).json({ error: "No OTP requested for this number" });
+    if (Date.now() > record.expiresAt) return res.status(400).json({ error: "OTP expired, please request a new one" });
+    if (record.otp !== otp) return res.status(400).json({ error: "Incorrect OTP" });
+
+    delete otpStore[phone];
+    res.json({ verified: true });
+  } catch (err) {
+    res.status(500).json({ error: "Verification failed" });
   }
 });
 
