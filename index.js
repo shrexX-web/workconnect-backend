@@ -1,6 +1,8 @@
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
 require("dotenv").config();
 
 const app = express();
@@ -36,8 +38,129 @@ const Job = require("./models/Job");
 const Worker = require("./models/Worker");
 const Review = require("./models/Review");
 const Comment = require("./models/Comment");
+const User = require("./models/User");
 
 const otpStore = {};
+
+function createToken(user) {
+  return jwt.sign(
+    {
+      userId: user._id.toString(),
+      role: user.role
+    },
+    process.env.JWT_SECRET,
+    { expiresIn: "7d" }
+  );
+}
+
+app.post("/api/auth/register", async (req, res) => {
+  try {
+    const { name, email, phone, password } = req.body;
+
+    if (![name, email, phone, password].every(
+      (value) => typeof value === "string" && value.trim()
+    )) {
+      return res.status(400).json({
+        error: "Name, email, phone, and password are required."
+      });
+    }
+
+    if (password.length < 8) {
+      return res.status(400).json({
+        error: "Password must be at least 8 characters long."
+      });
+    }
+
+    if (!process.env.JWT_SECRET) {
+      return res.status(500).json({
+        error: "Server authentication is not configured."
+      });
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanPhone = phone.trim();
+
+    const existingUser = await User.findOne({
+      $or: [{ email: cleanEmail }, { phone: cleanPhone }]
+    });
+
+    if (existingUser) {
+      return res.status(409).json({
+        error: "An account with this email or phone already exists."
+      });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 12);
+
+    const user = await User.create({
+      name: name.trim(),
+      email: cleanEmail,
+      phone: cleanPhone,
+      password: passwordHash,
+      role: "customer"
+    });
+
+    const token = createToken(user);
+
+    res.status(201).json({
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        role: user.role
+      }
+    });
+  } catch (err) {
+    console.error("Registration error:", err);
+    res.status(500).json({ error: "Could not create account." });
+  }
+});
+
+app.post("/api/auth/login", async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({
+        error: "Email and password are required."
+      });
+    }
+
+    if (!process.env.JWT_SECRET) {
+      return res.status(500).json({
+        error: "Server authentication is not configured."
+      });
+    }
+
+    const user = await User.findOne({
+      email: email.trim().toLowerCase()
+    });
+
+    if (!user || !(await bcrypt.compare(password, user.password))) {
+      return res.status(401).json({
+        error: "Invalid email or password."
+      });
+    }
+
+    const token = createToken(user);
+
+    res.json({
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        role: user.role
+      }
+    });
+  } catch (err) {
+    console.error("Login error:", err);
+    res.status(500).json({ error: "Could not log in." });
+  }
+});
 
 // Post a new job
 app.post("/api/jobs", async (req, res) => {
