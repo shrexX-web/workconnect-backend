@@ -25,14 +25,50 @@ const Comment = require("./models/Comment");
 const otpStore = {};
 
 // Post a new job
-app.post("/api/jobs", async (req, res) => {
-    try {
-        const newJob = new Job(req.body);
-        await newJob.save();
-        res.status(201).json(newJob);
-    } catch (err) {
-        res.status(500).json({ error: "Failed to save job" });
+aapp.post("/api/jobs", async (req, res) => {
+  try {
+    const { name, email, phone, service, description, visibility = "private" } = req.body;
+
+    if (![name, email, phone, service].every(
+      (value) => typeof value === "string" && value.trim()
+    )) {
+      return res.status(400).json({
+        error: "Name, email, phone, and service are required."
+      });
     }
+
+    const allowedServices = [
+      "plumbing",
+      "electrical",
+      "painting",
+      "carpentry",
+      "cleaning",
+      "ac-repair"
+    ];
+
+    if (!allowedServices.includes(service)) {
+      return res.status(400).json({ error: "Please select a valid service." });
+    }
+
+    if (!["private", "public"].includes(visibility)) {
+      return res.status(400).json({ error: "Invalid job visibility." });
+    }
+
+    const newJob = new Job({
+      name: name.trim(),
+      email: email.trim().toLowerCase(),
+      phone: phone.trim(),
+      service,
+      description: typeof description === "string" ? description.trim() : "",
+      visibility
+    });
+
+    await newJob.save();
+    res.status(201).json(newJob);
+  } catch (err) {
+    console.error("Failed to save job:", err);
+    res.status(500).json({ error: "Failed to save job." });
+  }
 });
 
 // Get all public community jobs (with comment counts)
