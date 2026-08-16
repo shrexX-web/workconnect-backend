@@ -53,6 +53,33 @@ function createToken(user) {
   );
 }
 
+// Verifies a Bearer JWT and requires role === "admin". Attaches req.user on success.
+function requireAdmin(req, res, next) {
+  try {
+    const authHeader = req.headers.authorization || "";
+    const [scheme, token] = authHeader.split(" ");
+
+    if (scheme !== "Bearer" || !token) {
+      return res.status(401).json({ error: "Missing or invalid authorization header." });
+    }
+
+    if (!process.env.JWT_SECRET) {
+      return res.status(500).json({ error: "Server authentication is not configured." });
+    }
+
+    const payload = jwt.verify(token, process.env.JWT_SECRET);
+
+    if (payload.role !== "admin") {
+      return res.status(403).json({ error: "Admin access required." });
+    }
+
+    req.user = payload;
+    next();
+  } catch (err) {
+    return res.status(401).json({ error: "Invalid or expired token." });
+  }
+}
+
 app.post("/api/auth/register", async (req, res) => {
   try {
     const { name, email, phone, password } = req.body;
@@ -158,6 +185,50 @@ app.post("/api/auth/login", async (req, res) => {
     });
   } catch (err) {
     console.error("Login error:", err);
+    res.status(500).json({ error: "Could not log in." });
+  }
+});
+
+app.post("/api/auth/admin-login", async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({
+        error: "Email and password are required."
+      });
+    }
+
+    if (!process.env.JWT_SECRET) {
+      return res.status(500).json({
+        error: "Server authentication is not configured."
+      });
+    }
+
+    const user = await User.findOne({
+      email: email.trim().toLowerCase(),
+      role: "admin"
+    });
+
+    if (!user || !(await bcrypt.compare(password, user.password))) {
+      return res.status(401).json({
+        error: "Invalid admin credentials."
+      });
+    }
+
+    const token = createToken(user);
+
+    res.json({
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role
+      }
+    });
+  } catch (err) {
+    console.error("Admin login error:", err);
     res.status(500).json({ error: "Could not log in." });
   }
 });
@@ -299,7 +370,7 @@ app.patch("/api/jobs/:id/complete", async (req, res) => {
 });
 
 // ADMIN: reset a job back to open (undo a bad/stale claim)
-app.patch("/api/admin/jobs/:id/reset", async (req, res) => {
+app.patch("/api/admin/jobs/:id/reset", requireAdmin, async (req, res) => {
   try {
     const job = await Job.findById(req.params.id);
     if (!job) return res.status(404).json({ error: "Job not found" });
@@ -314,7 +385,7 @@ app.patch("/api/admin/jobs/:id/reset", async (req, res) => {
 });
 
 // ADMIN: delete a job
-app.delete("/api/admin/jobs/:id", async (req, res) => {
+app.delete("/api/admin/jobs/:id", requireAdmin, async (req, res) => {
   try {
     await Job.findByIdAndDelete(req.params.id);
     res.json({ deleted: true });
@@ -324,7 +395,7 @@ app.delete("/api/admin/jobs/:id", async (req, res) => {
 });
 
 // ADMIN: delete a worker
-app.delete("/api/admin/workers/:id", async (req, res) => {
+app.delete("/api/admin/workers/:id", requireAdmin, async (req, res) => {
   try {
     await Worker.findByIdAndDelete(req.params.id);
     res.json({ deleted: true });
@@ -497,7 +568,7 @@ app.post("/api/otp/verify", async (req, res) => {
 });
 
 // Admin: get everything
-app.get("/api/admin/jobs", async (req, res) => {
+app.get("/api/admin/jobs", requireAdmin, async (req, res) => {
   try {
     const allJobs = await Job.find().sort({ createdAt: -1 });
     res.json(allJobs);
@@ -506,7 +577,7 @@ app.get("/api/admin/jobs", async (req, res) => {
   }
 });
 
-app.get("/api/admin/workers", async (req, res) => {
+app.get("/api/admin/workers", requireAdmin, async (req, res) => {
   try {
     const allWorkers = await Worker.find().sort({ createdAt: -1 });
     res.json(allWorkers);
