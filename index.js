@@ -5,7 +5,22 @@ require("dotenv").config();
 
 const app = express();
 
-app.use(cors());
+const allowedOrigins = [
+  "https://workconnect-frontend.vercel.app",
+  "http://localhost:5173"
+];
+
+app.use(
+  cors({
+    origin(origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      return callback(new Error("Not allowed by CORS"));
+    }
+  })
+);
 app.use(express.json());
 
 mongoose.connect(process.env.MONGO_URI)
@@ -25,7 +40,7 @@ const Comment = require("./models/Comment");
 const otpStore = {};
 
 // Post a new job
-aapp.post("/api/jobs", async (req, res) => {
+app.post("/api/jobs", async (req, res) => {
   try {
     const { name, email, phone, service, description, visibility = "private" } = req.body;
 
