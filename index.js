@@ -37,7 +37,7 @@ const PORT = process.env.PORT || 5000;
 const Job = require("./models/Job");
 const Worker = require("./models/Worker");
 const Review = require("./models/Review");
-const Comment = require("./models/Comment");
+const Comment = require("./models/Comments");
 const User = require("./models/User");
 
 const otpStore = {};
